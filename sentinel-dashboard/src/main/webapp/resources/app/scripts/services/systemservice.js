@@ -57,8 +57,8 @@ app.service('SystemService', ['$http', function ($http) {
 
     return $http({
       url: '/system/save.json',
-      params: param,
-      method: 'GET'
+      data: rule,
+      method: 'POST'
     });
   };
 

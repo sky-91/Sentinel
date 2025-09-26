@@ -53,8 +53,8 @@ app.service('FlowServiceV1', ['$http', function ($http) {
 
         return $http({
             url: '/v1/flow/save.json',
-            params: param,
-            method: 'PUT'
+            data: rule,
+            method: 'POST'
         });
     };
 

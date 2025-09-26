@@ -17,20 +17,17 @@ package com.alibaba.csp.sentinel.dashboard.controller;
 
 import java.util.Date;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 
 import com.alibaba.csp.sentinel.dashboard.auth.AuthAction;
 import com.alibaba.csp.sentinel.dashboard.auth.AuthService.PrivilegeType;
 import com.alibaba.csp.sentinel.dashboard.discovery.AppManagement;
+import com.alibaba.csp.sentinel.dashboard.repository.rule.nacos.NacosRuleRepositoryAdapter;
 import com.alibaba.csp.sentinel.util.StringUtil;
 
-import com.alibaba.csp.sentinel.dashboard.client.SentinelApiClient;
 import com.alibaba.csp.sentinel.dashboard.datasource.entity.rule.FlowRuleEntity;
 import com.alibaba.csp.sentinel.dashboard.discovery.MachineInfo;
 import com.alibaba.csp.sentinel.dashboard.domain.Result;
-import com.alibaba.csp.sentinel.dashboard.repository.rule.InMemoryRuleRepositoryAdapter;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,12 +54,9 @@ public class FlowControllerV1 {
     private final Logger logger = LoggerFactory.getLogger(FlowControllerV1.class);
 
     @Autowired
-    private InMemoryRuleRepositoryAdapter<FlowRuleEntity> repository;
+    private NacosRuleRepositoryAdapter<FlowRuleEntity> repository;
     @Autowired
     private AppManagement appManagement;
-
-    @Autowired
-    private SentinelApiClient sentinelApiClient;
 
     @GetMapping("/rules")
     @AuthAction(PrivilegeType.READ_RULE)
@@ -82,8 +76,7 @@ public class FlowControllerV1 {
             return Result.ofFail(-1, "given ip does not belong to given app");
         }
         try {
-            List<FlowRuleEntity> rules = sentinelApiClient.fetchFlowRuleOfMachine(app, ip, port);
-            rules = repository.saveAll(rules);
+            List<FlowRuleEntity> rules = repository.findAllByMachine(MachineInfo.of(app, ip, port));
             return Result.ofSuccess(rules);
         } catch (Throwable throwable) {
             logger.error("Error when querying flow rules", throwable);
@@ -101,9 +94,9 @@ public class FlowControllerV1 {
         if (entity.getPort() == null) {
             return Result.ofFail(-1, "port can't be null");
         }
-        if (!appManagement.isValidMachineOfApp(entity.getApp(), entity.getIp())) {
-            return Result.ofFail(-1, "given ip does not belong to given app");
-        }
+//        if (!appManagement.isValidMachineOfApp(entity.getApp(), entity.getIp())) {
+//            return Result.ofFail(-1, "given ip does not belong to given app");
+//        }
         if (StringUtil.isBlank(entity.getLimitApp())) {
             return Result.ofFail(-1, "limitApp can't be null or empty");
         }
@@ -157,7 +150,6 @@ public class FlowControllerV1 {
         try {
             entity = repository.save(entity);
 
-            publishRules(entity.getApp(), entity.getIp(), entity.getPort()).get(5000, TimeUnit.MILLISECONDS);
             return Result.ofSuccess(entity);
         } catch (Throwable t) {
             Throwable e = t instanceof ExecutionException ? t.getCause() : t;
@@ -168,64 +160,56 @@ public class FlowControllerV1 {
 
     @PutMapping("/save.json")
     @AuthAction(PrivilegeType.WRITE_RULE)
-    public Result<FlowRuleEntity> apiUpdateFlowRule(Long id, String app,
-                                                  String limitApp, String resource, Integer grade,
-                                                  Double count, Integer strategy, String refResource,
-                                                  Integer controlBehavior, Integer warmUpPeriodSec,
-                                                  Integer maxQueueingTimeMs) {
-        if (id == null) {
+    public Result<FlowRuleEntity> apiUpdateFlowRule(@RequestBody FlowRuleEntity entity) {
+        if (entity == null) {
+            return Result.ofFail(-1, "entity can't be null");
+        }
+        if (entity.getId() == null) {
             return Result.ofFail(-1, "id can't be null");
         }
-        FlowRuleEntity entity = repository.findById(id);
-        if (entity == null) {
-            return Result.ofFail(-1, "id " + id + " dose not exist");
+        if (StringUtil.isNotBlank(entity.getApp())) {
+            entity.setApp(entity.getApp().trim());
         }
-        if (StringUtil.isNotBlank(app)) {
-            entity.setApp(app.trim());
+        if (StringUtil.isNotBlank(entity.getLimitApp())) {
+            entity.setLimitApp(entity.getLimitApp().trim());
         }
-        if (StringUtil.isNotBlank(limitApp)) {
-            entity.setLimitApp(limitApp.trim());
+        if (StringUtil.isNotBlank(entity.getResource())) {
+            entity.setResource(entity.getResource().trim());
         }
-        if (StringUtil.isNotBlank(resource)) {
-            entity.setResource(resource.trim());
-        }
-        if (grade != null) {
-            if (grade != 0 && grade != 1) {
-                return Result.ofFail(-1, "grade must be 0 or 1, but " + grade + " got");
+        if (entity.getGrade() != null) {
+            if (entity.getGrade() != 0 && entity.getGrade() != 1) {
+                return Result.ofFail(-1, "grade must be 0 or 1, but " + entity.getGrade() + " got");
             }
-            entity.setGrade(grade);
+            entity.setGrade(entity.getGrade());
         }
-        if (count != null) {
-            entity.setCount(count);
-        }
-        if (strategy != null) {
-            if (strategy != 0 && strategy != 1 && strategy != 2) {
-                return Result.ofFail(-1, "strategy must be in [0, 1, 2], but " + strategy + " got");
+        if (entity.getStrategy() != null) {
+            if (entity.getStrategy() != 0 && entity.getStrategy() != 1 && entity.getStrategy() != 2) {
+                return Result.ofFail(-1, "strategy must be in [0, 1, 2], but " + entity.getStrategy() + " got");
             }
-            entity.setStrategy(strategy);
-            if (strategy != 0) {
-                if (StringUtil.isBlank(refResource)) {
+            entity.setStrategy(entity.getStrategy());
+            if (entity.getStrategy() != 0) {
+                if (StringUtil.isBlank(entity.getRefResource())) {
                     return Result.ofFail(-1, "refResource can't be null or empty when strategy!=0");
                 }
-                entity.setRefResource(refResource.trim());
+                entity.setRefResource(entity.getRefResource().trim());
             }
         }
-        if (controlBehavior != null) {
-            if (controlBehavior != 0 && controlBehavior != 1 && controlBehavior != 2) {
-                return Result.ofFail(-1, "controlBehavior must be in [0, 1, 2], but " + controlBehavior + " got");
+        if (entity.getControlBehavior() != null) {
+            if (entity.getControlBehavior() != 0 && entity.getControlBehavior() != 1 && entity.getControlBehavior() != 2) {
+                return Result.ofFail(-1, "controlBehavior must be in [0, 1, 2], but " + entity.getControlBehavior() + " got");
             }
-            if (controlBehavior == 1 && warmUpPeriodSec == null) {
+            if (entity.getControlBehavior() == 1 && entity.getWarmUpPeriodSec() == null) {
                 return Result.ofFail(-1, "warmUpPeriodSec can't be null when controlBehavior==1");
             }
-            if (controlBehavior == 2 && maxQueueingTimeMs == null) {
+            if (entity.getControlBehavior() == 2 && entity.getMaxQueueingTimeMs() == null) {
                 return Result.ofFail(-1, "maxQueueingTimeMs can't be null when controlBehavior==2");
             }
-            entity.setControlBehavior(controlBehavior);
-            if (warmUpPeriodSec != null) {
-                entity.setWarmUpPeriodSec(warmUpPeriodSec);
+            entity.setControlBehavior(entity.getControlBehavior());
+            if (entity.getWarmUpPeriodSec() != null) {
+                entity.setWarmUpPeriodSec(entity.getWarmUpPeriodSec());
             }
-            if (maxQueueingTimeMs != null) {
-                entity.setMaxQueueingTimeMs(maxQueueingTimeMs);
+            if (entity.getMaxQueueingTimeMs() != null) {
+                entity.setMaxQueueingTimeMs(entity.getMaxQueueingTimeMs());
             }
         }
         Date date = new Date();
@@ -236,12 +220,11 @@ public class FlowControllerV1 {
                 return Result.ofFail(-1, "save entity fail: null");
             }
 
-            publishRules(entity.getApp(), entity.getIp(), entity.getPort()).get(5000, TimeUnit.MILLISECONDS);
             return Result.ofSuccess(entity);
         } catch (Throwable t) {
             Throwable e = t instanceof ExecutionException ? t.getCause() : t;
             logger.error("Error when updating flow rules, app={}, ip={}, ruleId={}", entity.getApp(),
-                entity.getIp(), id, e);
+                entity.getIp(), entity.getId(), e);
             return Result.ofFail(-1, e.getMessage());
         }
     }
@@ -260,22 +243,11 @@ public class FlowControllerV1 {
 
         try {
             repository.delete(id);
-        } catch (Exception e) {
-            return Result.ofFail(-1, e.getMessage());
-        }
-        try {
-            publishRules(oldEntity.getApp(), oldEntity.getIp(), oldEntity.getPort()).get(5000, TimeUnit.MILLISECONDS);
             return Result.ofSuccess(id);
-        } catch (Throwable t) {
-            Throwable e = t instanceof ExecutionException ? t.getCause() : t;
+        } catch (Exception e) {
             logger.error("Error when deleting flow rules, app={}, ip={}, id={}", oldEntity.getApp(),
-                oldEntity.getIp(), id, e);
+                    oldEntity.getIp(), id, e);
             return Result.ofFail(-1, e.getMessage());
         }
-    }
-
-    private CompletableFuture<Void> publishRules(String app, String ip, Integer port) {
-        List<FlowRuleEntity> rules = repository.findAllByMachine(MachineInfo.of(app, ip, port));
-        return sentinelApiClient.setFlowRuleOfMachineAsync(app, ip, port, rules);
     }
 }
