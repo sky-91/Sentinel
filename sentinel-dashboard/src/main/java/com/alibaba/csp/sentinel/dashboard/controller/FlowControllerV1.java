@@ -158,7 +158,7 @@ public class FlowControllerV1 {
         }
     }
 
-    @PutMapping("/save.json")
+    @PostMapping("/save.json")
     @AuthAction(PrivilegeType.WRITE_RULE)
     public Result<FlowRuleEntity> apiUpdateFlowRule(@RequestBody FlowRuleEntity entity) {
         if (entity == null) {
